@@ -11,6 +11,7 @@ const redisOptions = {
   connection: {
     host: process.env.REDIS_HOST,
     port: process.env.REDIS_PORT,
+    password: process.env.REDIS_PASSWORD,
     retryStrategy: (times) => {
       const delay = Math.min(times * 100, 3000);
       console.log(`Retrying Redis connection in ${delay}ms...`);
@@ -22,12 +23,12 @@ const redisOptions = {
 };
 
 // Create queue with error handling
-const backupQueue = new Queue('document-backup', redisOptions);
+// const backupQueue = new Queue('document-backup', redisOptions);
 
-backupQueue.on('error', (err) => {
-  console.error('Backup queue error:', err);
-  // Continue operation without backup functionality
-});
+// backupQueue.on('error', (err) => {
+//   console.error('Backup queue error:', err);
+//   // Continue operation without backup functionality
+// });
 
 // Process document backups with error handling
 const backupWorker = new Worker('document-backup', async (job) => {
@@ -62,6 +63,6 @@ backupWorker.on('failed', (job, err) => {
 });
 
 module.exports = {
-  backupQueue,
+  // backupQueue,
   backupWorker
 };

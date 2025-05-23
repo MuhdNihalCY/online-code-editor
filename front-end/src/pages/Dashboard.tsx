@@ -7,6 +7,8 @@ export function Dashboard() {
   const [searchQuery, setSearchQuery] = useState('');
   const { currentUser } = useStore();
 
+  console.log("dashboard called...");
+
   // TODO: Replace with actual data from API
   const documents = [
     {

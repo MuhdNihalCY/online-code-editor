@@ -32,7 +32,7 @@ const connectRedis = async () => {
 };
 
 // Attempt initial connection
-connectRedis();
+// connectRedis();
 
 // Cache document for 5 minutes with error handling
 const cacheDocument = async (docId, document) => {

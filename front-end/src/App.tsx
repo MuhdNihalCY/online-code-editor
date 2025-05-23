@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import { useStore } from './store/useStore';
 import { Moon, Sun } from 'lucide-react';
 import { LoginForm } from './components/auth/LoginForm';
+import { SignupForm } from './components/auth/signupForm';
 import { Dashboard } from './pages/Dashboard';
 import { EditorLayout } from './components/editor/EditorLayout';
 
@@ -29,6 +30,10 @@ export function App() {
           <Route
             path="/login"
             element={currentUser ? <Navigate to="/" replace /> : <LoginForm />}
+          />
+          <Route
+            path="/signup"
+            element={currentUser ? <Navigate to="/" replace /> : <SignupForm />}
           />
           <Route
             path="/editor/:id"

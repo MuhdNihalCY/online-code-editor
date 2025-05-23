@@ -52,6 +52,7 @@ router.post('/login', async (req, res) => {
 
     // Find user
     const user = await User.findOne({ email });
+    console.log(user);
     if (!user) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
@@ -69,7 +70,7 @@ router.post('/login', async (req, res) => {
       { expiresIn: '24h' }
     );
 
-    res.json({ token });
+    res.json({ token, email: user.email, _id: user._id });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Server error' });
