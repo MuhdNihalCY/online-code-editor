@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken');
 const Document = require('../models/Document');
+const Version = require('../models/Version'); // Import Version model
 const { backupQueue } = require('../queues/backup');
 const { cacheDocument, getCachedDocument, invalidateCache } = require('../services/redis');
 
@@ -62,7 +63,7 @@ const configureSocket = (io) => {
       }
     });
 
-    socket.on('text-change', async ({ docId, ops, version }) => {
+    socket.on('text-change', async ({ docId, content, version }) => {
       try {
         const document = await Document.findById(docId);
         if (!document) return;
@@ -81,15 +82,12 @@ const configureSocket = (io) => {
         // Broadcast changes
         socket.to(docId).emit('text-change', {
           userId: socket.userId,
-          ops,
+          content,
           version
         });
 
         // Update document
-        document.content = ops.reduce((content, op) => {
-          // Apply operational transform
-          return content; // Implement OT logic here
-        }, document.content);
+        document.content = content;
         
         document.version = version;
         await document.save();
@@ -103,7 +101,7 @@ const configureSocket = (io) => {
           content: document.content,
           version: document.version,
           userId: socket.userId,
-          changes: ops
+          changes: content // Using content here, might need review
         });
 
       } catch (err) {
@@ -122,6 +120,120 @@ const configureSocket = (io) => {
     socket.on('disconnect', () => {
       console.log(`User disconnected: ${socket.userId}`);
     });
+
+    // Handler for fetching document versions
+    socket.on('document:getVersions', async (payload, callback) => {
+      try {
+        const { documentId, page: pageParam, limit: limitParam } = payload;
+        
+        if (!documentId) {
+          return callback({ error: 'Document ID is required' });
+        }
+
+        const page = parseInt(String(pageParam), 10) || 1;
+        const limit = parseInt(String(limitParam), 10) || 20;
+
+        if (page < 1 || limit < 1) {
+          return callback({ error: 'Page and limit must be positive numbers.' });
+        }
+
+        const document = await Document.findById(documentId);
+        if (!document) {
+          return callback({ error: 'Document not found' });
+        }
+
+        // Access Control: User must be owner or collaborator
+        const isOwner = document.owner.equals(socket.userId);
+        const isCollaborator = document.collaborators.some(c => c.user.equals(socket.userId));
+
+        if (!isOwner && !isCollaborator) {
+          return callback({ error: 'Access denied' });
+        }
+
+        const totalVersions = await Version.countDocuments({ documentId });
+        const versions = await Version.find({ documentId })
+          .sort({ version: -1 }) // Keep existing sort
+          .skip((page - 1) * limit)
+          .limit(limit)
+          .populate('author', 'name email') // Keep existing populate
+          .select('-changes'); // Keep existing select
+
+        callback({ versions, totalVersions, currentPage: page, totalPages: Math.ceil(totalVersions / limit) });
+      } catch (err) {
+        console.error('Error fetching document versions:', err);
+        callback({ error: 'Failed to fetch versions' });
+      }
+    });
+
+    // Handler for restoring a document version
+    socket.on('document:restore', async (payload) => {
+      try {
+        const { documentId, versionId } = payload;
+        if (!documentId || !versionId) {
+          socket.emit('error', { message: 'Document ID and Version ID are required' });
+          return;
+        }
+
+        const document = await Document.findById(documentId);
+        if (!document) {
+          socket.emit('error', { message: 'Document not found' });
+          return;
+        }
+
+        // Access Control: User must be owner or editor
+        const isOwner = document.owner.equals(socket.userId);
+        const isEditor = document.collaborators.some(
+          c => c.user.equals(socket.userId) && c.role === 'editor'
+        );
+
+        if (!isOwner && !isEditor) {
+          socket.emit('error', { message: 'Access denied: You do not have permission to restore this document.' });
+          return;
+        }
+
+        const versionToRestore = await Version.findById(versionId);
+        if (!versionToRestore) {
+          socket.emit('error', { message: 'Version not found' });
+          return;
+        }
+
+        // Restore document content and increment version
+        document.content = versionToRestore.content;
+        document.version += 1; // Increment version
+        await document.save();
+        
+        // Invalidate cache for the updated document
+        await invalidateCache(documentId);
+
+        // Broadcast the changes to all clients in the room
+        io.to(documentId).emit('text-change', {
+          userId: socket.userId, // The user who initiated the restore
+          content: document.content,
+          version: document.version,
+        });
+
+        // Queue a new backup job for the restored state
+        await backupQueue.add('create-backup', {
+          documentId: documentId,
+          content: document.content,
+          version: document.version,
+          userId: socket.userId, // User who performed the restore
+          changes: `Restored from version ${versionToRestore.version}`, // Description of change
+        });
+
+        // Optionally, send a success confirmation to the client who initiated restore
+        socket.emit('document:restoreSuccess', { 
+          message: 'Document restored successfully',
+          newVersion: document.version,
+          restoredContent: document.content 
+        });
+
+      } catch (err) {
+        console.error('Error restoring document version:', err);
+        socket.emit('error', { message: 'Failed to restore document version' });
+      }
+    });
+
   });
 };
 

@@ -29,4 +29,7 @@ const versionSchema = new mongoose.Schema({
   }
 });
 
+// Compound index for querying versions by document and sorting by version number
+versionSchema.index({ documentId: 1, version: -1 });
+
 module.exports = mongoose.model('Version', versionSchema);

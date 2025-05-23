@@ -17,7 +17,8 @@ const documentSchema = new mongoose.Schema({
   owner: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
-    required: true
+    required: true,
+    index: true // Added index for owner
   },
   collaborators: [{
     user: {
@@ -49,5 +50,8 @@ documentSchema.pre('save', function(next) {
   this.updatedAt = new Date();
   next();
 });
+
+// Index for finding documents a user collaborates on
+documentSchema.index({ 'collaborators.user': 1 });
 
 module.exports = mongoose.model('Document', documentSchema);

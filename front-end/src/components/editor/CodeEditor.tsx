@@ -6,6 +6,24 @@ import { socket } from '../../lib/socket';
 import { RemoteCursor } from './RemoteCursor';
 import type { editor } from 'monaco-editor';
 
+// Debounce utility function
+function debounce<F extends (...args: any[]) => any>(func: F, waitFor: number) {
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+  return (...args: Parameters<F>): Promise<ReturnType<F>> => {
+    return new Promise((resolve) => {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+
+      timeoutId = setTimeout(() => {
+        timeoutId = null;
+        resolve(func(...args));
+      }, waitFor);
+    });
+  };
+}
+
 const CURSOR_COLORS = [
   '#FF0000', '#00FF00', '#0000FF', '#FFFF00',
   '#FF00FF', '#00FFFF', '#FFA500', '#800080'
@@ -18,17 +36,47 @@ export function CodeEditor() {
   const { id } = useParams();
   const decorationsRef = useRef<string[]>([]);
 
+  const debouncedEmitChangeRef = useRef(
+    debounce((value: string, docId: string, user: typeof currentUser, docVersion: number) => {
+      if (!user || !docId) return; // Safety check
+      socket.emit('text-change', { // Emitting 'text-change' as per instruction for debounced call
+        content: value,
+        docId: docId, // Using docId
+        userId: user.id,
+        version: docVersion,
+      });
+    }, 750) // 750ms debounce delay
+  );
+
   useEffect(() => {
     if (!id || !currentUser) return;
 
     socket.connect();
-    socket.emit('document:join', { documentId: id, userId: currentUser.id });
+    socket.emit('join-document', { docId: id, userId: currentUser.id });
+
+    const handleIncomingTextChange = (data: { content: string; userId: string; version: number }) => {
+      if (data.userId !== currentUser?.id) {
+        editorRef.current?.setValue(data.content);
+        useStore.getState().actions.updateDocument({ content: data.content, version: data.version });
+      }
+    };
+
+    const handleIncomingCursorUpdate = (cursorData: { userId: string; userName: string; position: number; docId: string }) => {
+      // Assuming docId check might be relevant if a user is in multiple docs, though current setup is one doc at a time.
+      // For now, directly update as the component is tied to a single 'id' (docId) from useParams.
+      useStore.getState().actions.updateCursorPosition(cursorData);
+    };
+
+    socket.on('text-change', handleIncomingTextChange);
+    socket.on('cursor-update', handleIncomingCursorUpdate);
 
     return () => {
-      socket.emit('document:leave', { documentId: id, userId: currentUser.id });
+      socket.emit('document:leave', { docId: id, userId: currentUser.id });
+      socket.off('text-change', handleIncomingTextChange);
+      socket.off('cursor-update', handleIncomingCursorUpdate);
       socket.disconnect();
     };
-  }, [id, currentUser]);
+  }, [id, currentUser, editorRef, monaco]); // Added editorRef and monaco to dependencies for safety, though setValue and actions should be stable.
 
   useEffect(() => {
     if (!monaco || !editorRef.current) return;
@@ -93,24 +141,23 @@ export function CodeEditor() {
       if (!currentUser) return;
 
       const position = editor.getModel()?.getOffsetAt(e.position) ?? 0;
-      socket.emit('cursor:update', {
+      socket.emit('cursor-move', { // Changed event name
         userId: currentUser.id,
         userName: currentUser.name,
         position,
-        documentId: id,
+        docId: id, // Changed payload field
       });
     });
   };
 
   const handleEditorChange = (value: string | undefined) => {
-    if (!value || !currentUser || !id) return;
+    if (value === undefined || !currentUser || !id) return; // Keep undefined check
 
-    socket.emit('document:change', {
-      content: value,
-      documentId: id,
-      userId: currentUser.id,
-      version: currentDocument?.version ?? 1,
-    });
+    // Call the debounced function from the ref
+    debouncedEmitChangeRef.current(value, id, currentUser, currentDocument?.version ?? 1);
+
+    // Optional: Update local state immediately if needed for UI feedback (e.g., unsaved changes indicator)
+    // useStore.getState().actions.updateDocument({ content: value /*, unsavedChanges: true */ });
   };
 
   return (
